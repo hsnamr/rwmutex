@@ -43,47 +43,62 @@ rwmutex_t *create_rwmutex(int N)
 
 void read_lock(rwmutex_t *ReadWriteMutex)
 {
-	printf("Just entered read_lock\n");
-	if(list_search(&ReadWriteMutex->ReaderThreadIDs, pthread_self()) == NULL)
+	list_search(&n, pthread_self());
+	pause();
+
+	if(!pthread_equal(n->data, pthread_self()))
 	{
 		pthread_mutex_lock(&ReadWriteMutex->ReadWriteLock);
-		printf("Writers Active %d\n", ReadWriteMutex->writersActive);
-		printf("Readers Active %d\n", ReadWriteMutex->readersActive);
-		printf("Locking Read\n");
+
+		#ifdef LOG
+		printf("Locking read\n");
+		#endif
 
 		if(ReadWriteMutex->writersActive > 0 || ReadWriteMutex->writersWaiting > 0)
 		{
 			ReadWriteMutex->readersWaiting++;
-			printf("Waiting for writers to finish\n");
+			#ifdef LOG
+			printf("readers waiting %d\n",ReadWriteMutex->readersWaiting);
+			#endif
+			
 			while (ReadWriteMutex-> writersActive > 0)
 				pthread_cond_wait(&ReadWriteMutex->readCondition, &ReadWriteMutex->ReadWriteLock);
 			ReadWriteMutex->readersWaiting--;
+			
+			#ifdef LOG
+			printf("readers waiting %d\n",ReadWriteMutex->readersWaiting);
+			#endif
 		}
 
-		printf("Adding an element\n");
-		list_add(&ReadWriteMutex->ReaderThreadIDs, pthread_self());
-		printf("Element Added\n");
 		ReadWriteMutex->readersActive++;
 
-		printf("Read Locked\n");
+		list_add(&n, pthread_self());
+		list_print(&n);	
+		
+		#ifdef LOG
+		printf("readers active %d\n",ReadWriteMutex->readersActive);
+		#endif
+		
 		pthread_mutex_unlock(&ReadWriteMutex->ReadWriteLock);
 	}
-	printf("Exiting read_lock\n");
 	return;
 }
 
 void read_unlock(rwmutex_t *ReadWriteMutex)
 {
-	printf("Just entered read_unlock\n");
 	if(ReadWriteMutex->readersActive > 0)
 	{
-		if(list_search(&ReadWriteMutex->ReaderThreadIDs ,pthread_self())!= NULL)
-		{
-			pthread_mutex_lock(&ReadWriteMutex->ReadWriteLock);
-			printf("Unlocking Read\n");
+		list_search(&n, pthread_self());
 
-			if(ReadWriteMutex->readersActive > 0)
-				ReadWriteMutex->readersActive--;
+		if(pthread_equal(n->data, pthread_self()))
+		{
+			list_remove(&n, list_search(&n, pthread_self()));
+			pthread_mutex_lock(&ReadWriteMutex->ReadWriteLock);
+
+			ReadWriteMutex->readersActive--;
+			#ifdef LOG
+			printf("Unlocking read\n");
+			#endif
 
 			if(ReadWriteMutex->readersActive == 0 && ReadWriteMutex->writersWaiting>0)
 				pthread_cond_signal(&ReadWriteMutex->writeCondition);
@@ -91,71 +106,85 @@ void read_unlock(rwmutex_t *ReadWriteMutex)
 			else
 				pthread_cond_broadcast(&ReadWriteMutex->readCondition);
 
-			printf("Removing an element\n");
-			list_remove(list_search(&ReadWriteMutex->ReaderThreadIDs, pthread_self()));
-			printf("Elemenet removed\n");
-
-			printf("Read Unlocked\n");
 			pthread_mutex_unlock(&ReadWriteMutex->ReadWriteLock);
 		}
 	}
-	printf("Exiting read_unlock\n");
 	return;
 }
 
 void write_lock(rwmutex_t *ReadWriteMutex)
 {
-	printf("Just entered write_lock\n");
 	if(!pthread_equal(ReadWriteMutex->lockingThread, pthread_self()))
 	{
 		pthread_mutex_lock(&ReadWriteMutex->ReadWriteLock);
+
+		#ifdef LOG
 		printf("Locking Write\n");
+		#endif
 
 		if(ReadWriteMutex->writersActive > 0 || ReadWriteMutex->readersActive > 0)
 		{
 			ReadWriteMutex->writersWaiting++;
+			#ifdef LOG
 			printf("writers waiting %d\n",ReadWriteMutex->writersWaiting);
-			printf("Waiting for readers/writers to finish\n");
+			#endif
+			
 			while(ReadWriteMutex->writersActive > 0 || ReadWriteMutex->readersActive > 0)
 				pthread_cond_wait(&ReadWriteMutex->writeCondition,
 					&ReadWriteMutex->ReadWriteLock);
 			ReadWriteMutex->writersWaiting--;
 		}
 
+		#ifdef LOG
+		printf("Write Locked\n");
+		#endif
+
 		ReadWriteMutex->writersActive = 1;
+
 		ReadWriteMutex->lockingThread = pthread_self();
 
-		printf("Write Locked\n");
 		pthread_mutex_unlock(&ReadWriteMutex->ReadWriteLock);
 	}
-	printf("Exiting write_lock\n");
+
 	return;
 }
 
 void write_unlock(rwmutex_t *ReadWriteMutex)
 {
-	printf("Just entered write_unlock\n");
 	if(ReadWriteMutex->writersActive > 0)
 	{
 		if(pthread_equal(ReadWriteMutex->lockingThread, pthread_self()))
 		{
+
 			pthread_mutex_lock(&ReadWriteMutex->ReadWriteLock);
+
+			#ifdef LOG
 			printf("Unlocking Write\n");
+			#endif
 
 			ReadWriteMutex->writersActive = 0;
 			ReadWriteMutex->lockingThread = 0;
 
 			if(ReadWriteMutex->readersWaiting < ReadWriteMutex->priorityValue)
-				pthread_cond_signal(&ReadWriteMutex->writeCondition);
+				if(pthread_cond_signal(&ReadWriteMutex->writeCondition)!= 0) {
+				 	perror("Error while signaling");
+					exit(2);
+				}
 
 			else if(ReadWriteMutex->readersWaiting >= ReadWriteMutex->priorityValue)
-				pthread_cond_broadcast(&ReadWriteMutex->readCondition);
+				if(pthread_cond_broadcast(&ReadWriteMutex->readCondition) != 0) {
+				 	perror("Error while broadcasting");
+					exit(2);
+				}
 
+			#ifdef LOG
 			printf("Write Unlocked\n");
+			#endif
+			
 			pthread_mutex_unlock(&ReadWriteMutex->ReadWriteLock);
+
 		}
 	}
-	printf("Exiting write_unlock\n");
 	return;
 }
 
